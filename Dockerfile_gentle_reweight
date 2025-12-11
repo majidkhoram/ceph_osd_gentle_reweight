@@ -1,0 +1,17 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       python3 \
+       python3-distutils \
+       ceph-common \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/ceph-scripts
+COPY tools/ceph-gentle-reweight /usr/local/bin/ceph-gentle-reweight
+RUN chmod +x /usr/local/bin/ceph-gentle-reweight
+
+ENTRYPOINT ["ceph-gentle-reweight"]

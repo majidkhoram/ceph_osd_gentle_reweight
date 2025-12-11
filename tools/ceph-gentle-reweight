@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 #
 # ceph-gentle-drain
 # Author: Dan van der Ster <daniel.vanderster@cern.ch>
@@ -6,27 +6,28 @@
 # Slowly drain a list of OSDs causing minimal impact in a ceph cluster.
 #
 
-import os, sys, getopt, commands, json, time, datetime
+import os, sys, getopt, json, time, datetime
+from subprocess import getoutput
 
 def update_osd_tree():
   global osd_tree
-  print "update_osd_tree: loading ceph osd tree"
-  osd_tree_json = commands.getoutput('ceph osd tree --format=json 2>/dev/null')
+  print("update_osd_tree: loading ceph osd tree")
+  osd_tree_json = getoutput('ceph osd tree --format=json 2>/dev/null')
   osd_tree = json.loads(osd_tree_json)
-  print "update_osd_tree: done"
+  print("update_osd_tree: done")
 
 def get_crush_weight(osd):
   global osd_tree
   for node in osd_tree['nodes']:
     if node['name'] == osd:
       weight = float(node['crush_weight'])
-      print "get_crush_weight: %s has weight %s" % (osd, weight)
+      print("get_crush_weight: %s has weight %s" % (osd, weight))
       return weight
   raise Exception('Undefined crush_weight for %s' % osd)
 
 def in_timeframe(start_time, end_time, current_time, allowed_days, current_day):
-  print current_time.strftime('check current time: %H:%M:%S')
-  print "check current day: %s" % (current_day)
+  print(current_time.strftime('check current time: %H:%M:%S'))
+  print("check current day: %s" % (current_day))
   if current_day in allowed_days:
     time_ok = True
   elif start_time < end_time:
@@ -41,55 +42,55 @@ def in_timeframe(start_time, end_time, current_time, allowed_days, current_day):
   return time_ok
 
 def measure_latency(test_pool):
-  print "measure_latency: measuring 4kB write latency"
-  latency = commands.getoutput("rados -p %s bench 10 write -t 1 -b 4096 2>/dev/null | egrep -i 'average latency' | awk '{print $3}'" % test_pool)
+  print("measure_latency: measuring 4kB write latency")
+  latency = getoutput("rados -p %s bench 10 write -t 1 -b 4096 2>/dev/null | egrep -i 'average latency' | awk '{print $3}'" % test_pool)
   latency_ms = 1000*float(latency)
-  print "measure_latency: current latency is %s" % latency_ms
+  print("measure_latency: current latency is %s" % latency_ms)
   return latency_ms
 
 def get_num_backfilling():
   n = 0
   cmd = "ceph pg stat | tr ',:' '\n' | awk '/%s/ { total += $1}; END { print total}'"
   for status in ['backfilling', 'backfill_wait']:
-    out = commands.getoutput(cmd % status)
+    out = getoutput(cmd % status)
     if out:
       n += int(out)
-  print "get_num_backfilling: PGs currently backfilling: %s" % n
+  print("get_num_backfilling: PGs currently backfilling: %s" % n)
   return n
 
 def crush_reweight(osd, weight, really):
   cmd = "ceph osd crush reweight %s %s &" % (osd, weight)
-  print "crush_reweight: calling %s" % cmd
+  print("crush_reweight: calling %s" % cmd)
   if really:
     out = os.system(cmd)
-    print "crush_reweight: %s" % out
+    print("crush_reweight: %s" % out)
     return
-  print "crush_reweight: not really doing it!"
+  print("crush_reweight: not really doing it!")
 
 def reweight_osds(osds, max_pgs_backfilling, max_latency, delta_weight, target_weight, test_pool, start_time, end_time, allowed_days, interval, really):
   # check if there is any work to do:
   update_osd_tree()
 
-  print "reweight_osds: changing all osds by weight %s (target %s)" % (delta_weight, target_weight)
+  print("reweight_osds: changing all osds by weight %s (target %s)" % (delta_weight, target_weight))
 
   # check timeframe
   current_time = datetime.datetime.now().time()
   current_day = datetime.datetime.now().weekday()
   time_ok = in_timeframe(start_time, end_time, current_time, allowed_days, current_day)
   if not time_ok:
-    print "current time: not within range %s - %s, trying again later" % (start_time, end_time)
+    print("current time: not within range %s - %s, trying again later" % (start_time, end_time))
     return
 
   # check num pgs backfilling
   npgs = get_num_backfilling()
   if npgs > max_pgs_backfilling:
-    print "reweight_osds: npgs backfilling is too high, trying again later"
+    print("reweight_osds: npgs backfilling is too high, trying again later")
     return
 
   # check the latency
   latency = measure_latency(test_pool)
   if latency > max_latency:
-    print "reweight_osds: latency is too high, trying again later"
+    print("reweight_osds: latency is too high, trying again later")
     return
 
   changed = False
@@ -97,32 +98,32 @@ def reweight_osds(osds, max_pgs_backfilling, max_latency, delta_weight, target_w
   for osd in osds:
     weight = get_crush_weight(osd)
     if delta_weight > 0 and weight >= (target_weight - delta_weight / 20):
-      print "reweight_osds: skipping %s with weight %s target %s" % (osd, weight, target_weight)
+      print("reweight_osds: skipping %s with weight %s target %s" % (osd, weight, target_weight))
       continue
 
     if delta_weight < 0 and weight <= (target_weight - delta_weight / 20):
-      print "reweight_osds: skipping %s with weight %s target %s" % (osd, weight, target_weight)
+      print("reweight_osds: skipping %s with weight %s target %s" % (osd, weight, target_weight))
       continue
 
     if delta_weight >= 0:
       new_weight = max(min(weight + delta_weight, target_weight), 0)
     else:
       new_weight = max(max(weight + delta_weight, target_weight), 0)
-    print "reweight_osds: %s new weight will be %s" % (osd, new_weight)
+    print("reweight_osds: %s new weight will be %s" % (osd, new_weight))
     crush_reweight(osd, new_weight, really)
     time.sleep(30)
     changed = True
 
   if not changed:
-    print "All done"
+    print("All done")
     sys.exit(0)
 
 def usage(code=0):
-  print 'ceph-gentle-reweight -o <osd>[,<osd>,...] [-l <max_latency (default=20)>] [-b <max pgs backfilling (default=50)>] [-d <delta weight (default=0.01)>] [-t <target weight (default=2)>] [-p <latency test pool (default=test)>] [-i <interval (default=60)>] [-s <start time (default=02:00)>] [-e <end time (default=09:00)>] [-a <day of week,[day of week,...]>]'
+  print('ceph-gentle-reweight -o <osd>[,<osd>,...] [-l <max_latency (default=20)>] [-b <max pgs backfilling (default=50)>] [-d <delta weight (default=0.01)>] [-t <target weight (default=2)>] [-p <latency test pool (default=test)>] [-i <interval (default=60)>] [-s <start time (default=02:00)>] [-e <end time (default=09:00)>] [-a <day of week,[day of week,...]>]')
   sys.exit(code)
 
 def check_for_pool(pool):
-  pools_json = commands.getoutput('ceph osd pool ls --format=json 2>/dev/null')
+  pools_json = getoutput('ceph osd pool ls --format=json 2>/dev/null')
   pools = json.loads(pools_json)
   if pool not in pools:
     raise ValueError("Pool '%s' does not exist!" % pool)
@@ -175,26 +176,25 @@ def main(argv):
   end_time = datetime.datetime.strptime(end_time, "%H:%M").time()
   start_time = datetime.datetime.strptime(start_time, "%H:%M").time()
   if allowed_days:
-    allowed_days = map(int, allowed_days)
+    allowed_days = list(map(int, allowed_days))
 
-  print 'Draining OSDs: ', drain_osds
-  print 'Max latency (ms): ', max_latency
-  print 'Max PGs backfilling: ', max_pgs_backfilling
-  print 'Delta weight:', delta_weight
-  print 'Target weight:', target_weight
-  print 'Latency test pool:', test_pool
-  print 'Run interval:', interval
-  print 'Start time:', start_time
-  print 'End time:', end_time
-  print 'Allowed days:', allowed_days
+  print('Draining OSDs: ', drain_osds)
+  print('Max latency (ms): ', max_latency)
+  print('Max PGs backfilling: ', max_pgs_backfilling)
+  print('Delta weight:', delta_weight)
+  print('Target weight:', target_weight)
+  print('Latency test pool:', test_pool)
+  print('Run interval:', interval)
+  print('Start time:', start_time)
+  print('End time:', end_time)
+  print('Allowed days:', allowed_days)
 
   check_for_pool(test_pool)
 
   while(True):
     reweight_osds(drain_osds, max_pgs_backfilling, max_latency, delta_weight, target_weight, test_pool, start_time, end_time, allowed_days, interval, really)
-    print "main: sleeping %ss" % interval
+    print("main: sleeping %ss" % interval)
     time.sleep(interval)
 
 if __name__ == "__main__":
   main(sys.argv[1:])
-
