@@ -1,5 +1,6 @@
 ceph-scripts
 ============
+This is a fork from [https://github.com/cernceph/ceph-scripts](https://github.com/cernceph/ceph-scripts). Please send your stars to him not me.
 
 Small helper scripts for monitoring/managing a Ceph cluster 
 
