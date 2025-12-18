@@ -71,7 +71,7 @@ def reweight_osds(osds, max_pgs_backfilling, max_latency, delta_weight, target_w
   # check if there is any work to do:
   update_osd_tree()
 
-  print("reweight_osds: changing all osds by weight %s (target %s)" % (delta_weight, target_weight))
+  print("reweight_osds: changing osd(s) by weight %s (target %s)" % (delta_weight, target_weight))
 
   # check timeframe
   current_time = datetime.datetime.now().time()
