@@ -28,9 +28,9 @@ def get_crush_weight(osd):
 def in_timeframe(start_time, end_time, current_time, allowed_days, current_day):
   print(current_time.strftime('check current time: %H:%M:%S'))
   print("check current day: %s" % (current_day))
-  if current_day in allowed_days:
-    time_ok = True
-  elif start_time < end_time:
+  if allowed_days and current_day not in allowed_days:
+    return False
+  if start_time < end_time:
     if current_time >= start_time and current_time <= end_time:
       time_ok = True
     else:
@@ -58,6 +58,19 @@ def get_num_backfilling():
   print("get_num_backfilling: PGs currently backfilling: %s" % n)
   return n
 
+def get_misplaced_ratio():
+  status_json = getoutput("ceph status --format=json 2>/dev/null")
+  status = json.loads(status_json)
+  pgmap = status.get('pgmap', {})
+  num_objects = float(pgmap.get('num_objects', 0))
+  num_misplaced = float(pgmap.get('num_objects_misplaced', 0))
+  if num_objects <= 0:
+    ratio = 0.0
+  else:
+    ratio = num_misplaced / num_objects
+  print("get_misplaced_ratio: misplaced %s / %s = %s" % (num_misplaced, num_objects, ratio))
+  return ratio
+
 def crush_reweight(osd, weight, really):
   cmd = "ceph osd crush reweight %s %s &" % (osd, weight)
   print("crush_reweight: calling %s" % cmd)
@@ -67,11 +80,11 @@ def crush_reweight(osd, weight, really):
     return
   print("crush_reweight: not really doing it!")
 
-def reweight_osds(osds, max_pgs_backfilling, max_latency, delta_weight, target_weight, test_pool, start_time, end_time, allowed_days, interval, really):
+def reweight_osds(osds, max_pgs_backfilling, max_latency, max_misplaced_ratio, delta_weight, target_weight, test_pool, start_time, end_time, allowed_days, interval, really):
   # check if there is any work to do:
   update_osd_tree()
 
-  print("reweight_osds: changing all osds by weight %s (target %s)" % (delta_weight, target_weight))
+  print("reweight_osds: changing osd(s) by weight %s (target %s)" % (delta_weight, target_weight))
 
   # check timeframe
   current_time = datetime.datetime.now().time()
@@ -87,11 +100,17 @@ def reweight_osds(osds, max_pgs_backfilling, max_latency, delta_weight, target_w
     print("reweight_osds: npgs backfilling is too high, trying again later")
     return
 
-  # check the latency
-  latency = measure_latency(test_pool)
-  if latency > max_latency:
-    print("reweight_osds: latency is too high, trying again later")
+  misplaced_ratio = get_misplaced_ratio()
+  if misplaced_ratio > max_misplaced_ratio:
+    print("reweight_osds: misplaced ratio is too high, trying again later")
     return
+
+  # check the latency if requested
+  if test_pool:
+    latency = measure_latency(test_pool)
+    if latency > max_latency:
+      print("reweight_osds: latency is too high, trying again later")
+      return
 
   changed = False
 
@@ -119,7 +138,7 @@ def reweight_osds(osds, max_pgs_backfilling, max_latency, delta_weight, target_w
     sys.exit(0)
 
 def usage(code=0):
-  print('ceph-gentle-reweight -o <osd>[,<osd>,...] [-l <max_latency (default=20)>] [-b <max pgs backfilling (default=50)>] [-d <delta weight (default=0.01)>] [-t <target weight (default=2)>] [-p <latency test pool (default=test)>] [-i <interval (default=60)>] [-s <start time (default=02:00)>] [-e <end time (default=09:00)>] [-a <day of week,[day of week,...]>]')
+  print('ceph-gentle-reweight -o <osd>[,<osd>,...] [-l <max_latency (default=30)>] [-b <max pgs backfilling (default=50)>] [-m <max misplaced ratio (default=0.01)>] [-d <delta weight (default=0.01)>] [-t <target weight (default=2)>] [-p <latency test pool>] [-i <interval (default=60)>] [-s <start time (default=02:00)>] [-e <end time (default=09:00)>] [-a <day of week,[day of week,...]>]')
   sys.exit(code)
 
 def check_for_pool(pool):
@@ -130,19 +149,20 @@ def check_for_pool(pool):
 
 def main(argv):
   drain_osds = []
-  max_latency = 20
+  max_latency = 30
   max_pgs_backfilling = 50
+  max_misplaced_ratio = 0.01
   delta_weight = 0.01
   target_weight = 5.46
-  test_pool = "test"
-  interval = 60
-  start_time = "02:00"
-  end_time = "09:00"
-  allowed_days = []
+  test_pool = ""
+  interval = 30
+  start_time = "01:00"
+  end_time = "07:00"
+  allowed_days = list(range(7))
   really = False
 
   try:
-    opts, args = getopt.getopt(argv,"ho:l:b:d:t:p:i:s:e:a:r",["osds=","latency=","backfills=","delta=","target=","pool=","interval=","start_time=","end_time=","allowed_days=","really"])
+    opts, args = getopt.getopt(argv,"ho:l:b:m:d:t:p:i:s:e:a:r",["osds=","latency=","backfills=","misplaced=","delta=","target=","pool=","interval=","start_time=","end_time=","allowed_days=","really"])
   except getopt.GetoptError:
     usage(2)
   for opt, arg in opts:
@@ -154,6 +174,8 @@ def main(argv):
       max_latency = int(arg)
     elif opt in ("-b", "--backfills"):
       max_pgs_backfilling = int(arg)
+    elif opt in ("-m", "--misplaced"):
+      max_misplaced_ratio = float(arg)
     elif opt in ("-d", "--delta"):
       delta_weight = float(arg)
     elif opt in ("-t", "--target"):
@@ -181,6 +203,7 @@ def main(argv):
   print('Draining OSDs: ', drain_osds)
   print('Max latency (ms): ', max_latency)
   print('Max PGs backfilling: ', max_pgs_backfilling)
+  print('Max misplaced ratio: ', max_misplaced_ratio)
   print('Delta weight:', delta_weight)
   print('Target weight:', target_weight)
   print('Latency test pool:', test_pool)
@@ -189,10 +212,11 @@ def main(argv):
   print('End time:', end_time)
   print('Allowed days:', allowed_days)
 
-  check_for_pool(test_pool)
+  if test_pool:
+    check_for_pool(test_pool)
 
   while(True):
-    reweight_osds(drain_osds, max_pgs_backfilling, max_latency, delta_weight, target_weight, test_pool, start_time, end_time, allowed_days, interval, really)
+    reweight_osds(drain_osds, max_pgs_backfilling, max_latency, max_misplaced_ratio, delta_weight, target_weight, test_pool, start_time, end_time, allowed_days, interval, really)
     print("main: sleeping %ss" % interval)
     time.sleep(interval)
 
