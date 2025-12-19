@@ -30,13 +30,14 @@ Flags (one-line each):
 - `-o/--osds`: comma-separated OSD ids to reweight.
 - `-l/--latency`: max allowed latency in ms before pausing.
 - `-b/--backfills`: max PGs backfilling before pausing.
+- `-m/--misplaced`: max allowed misplaced object ratio before pausing.
 - `-d/--delta`: weight increment/decrement per step.
 - `-t/--target`: target crush weight to reach.
-- `-p/--pool`: pool used to measure latency (`rados bench`).
+- `-p/--pool`: pool used to measure latency (`rados bench`); if omitted, latency is not checked.
 - `-i/--interval`: seconds to sleep between iterations.
 - `-s/--start-time`: start of allowed window (`HH:MM`).
 - `-e/--end-time`: end of allowed window (`HH:MM`).
-- `-a/--allowed-days`: allowed weekdays as ints (`0`=Mon).
+- `-a/--allowed-days`: allowed weekdays as ints (`0`=Mon); defaults to all days.
 - `-r/--really`: actually apply weights (omit for dry-run).
 
 Dry-run example (no reweights executed):
